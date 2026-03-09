@@ -51,9 +51,43 @@
             pointer-events: none;
             text-align: center;
         }
+        /* Custom Scrollbar */
+        .custom-scroll::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scroll::-webkit-scrollbar-thumb {
+            background: #e2e8f0;
+            border-radius: 10px;
+        }
+        /* Loading Overlay */
+        #loadingOverlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(4px);
+            z-index: 1000;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        /* Photo Preview Modal Style (Optional visual enhancement) */
+        .history-thumb {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            object-fit: cover;
+            background: #f1f5f9;
+        }
     </style>
 </head>
 <body class="text-slate-900 antialiased">
+
+    <!-- Loading Screen -->
+    <div id="loadingOverlay">
+        <div class="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+        <p class="text-sm font-bold text-slate-600">Memproses Presensi...</p>
+    </div>
 
     <div id="app" class="max-w-md mx-auto min-h-screen flex flex-col pb-20">
         <!-- Header -->
@@ -81,7 +115,7 @@
         <main id="presensiView" class="px-6 py-6 space-y-6">
             <div class="space-y-4">
                 <label class="text-[11px] font-black text-slate-400 uppercase tracking-widest">Nama Pegawai</label>
-                <input type="text" id="nameInput" placeholder="Ketik nama lengkap Anda" class="w-full bg-white px-5 py-4 rounded-2xl border border-slate-200 font-bold outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-300 transition-all">
+                <input type="text" id="nameInput" oninput="filterPersonalHistory()" placeholder="Ketik nama lengkap Anda" class="w-full bg-white px-5 py-4 rounded-2xl border border-slate-200 font-bold outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-300 transition-all">
             </div>
 
             <div class="video-wrapper">
@@ -92,19 +126,31 @@
                     <div id="timeStamp">--:--:--</div>
                     <div id="locationLabel" class="text-[10px] text-emerald-300 mt-1 font-medium">📍 FVJ2+G78, TIKALA ARES</div>
                 </div>
-
-                <div id="captureAction" class="absolute bottom-6 left-0 right-0 flex justify-center">
-                    <button id="snapBtn" onclick="takeSnapshot()" class="w-16 h-16 bg-white rounded-full border-4 border-white/30 flex items-center justify-center active:scale-90 transition-transform shadow-2xl">
-                        <div class="w-12 h-12 border-2 border-blue-600 rounded-full"></div>
-                    </button>
-                </div>
             </div>
 
-            <button id="retakeBtn" onclick="retakePhoto()" class="hidden w-full py-3 text-sm font-bold text-blue-600 bg-blue-50 rounded-xl transition-all">Ambil Ulang Foto</button>
-
+            <!-- Tombol Aksi Langsung -->
             <div class="grid grid-cols-2 gap-4">
-                <button id="btnMasuk" onclick="submitAbsence('Masuk')" class="btn-gradient py-5 rounded-2xl text-white font-black shadow-lg active:scale-95 transition-all">MASUK</button>
-                <button id="btnPulang" onclick="submitAbsence('Pulang')" class="bg-slate-900 py-5 rounded-2xl text-white font-black shadow-lg active:scale-95 transition-all">PULANG</button>
+                <button onclick="handlePresence('Masuk')" class="btn-gradient py-5 rounded-2xl text-white font-black shadow-lg active:scale-95 transition-all flex flex-col items-center">
+                    <span>MASUK</span>
+                    <span class="text-[9px] opacity-70 font-normal mt-1">Foto Otomatis</span>
+                </button>
+                <button onclick="handlePresence('Pulang')" class="bg-slate-900 py-5 rounded-2xl text-white font-black shadow-lg active:scale-95 transition-all flex flex-col items-center">
+                    <span>PULANG</span>
+                    <span class="text-[9px] opacity-70 font-normal mt-1">Foto Otomatis</span>
+                </button>
+            </div>
+
+            <!-- Riwayat Absen Pegawai (Personal) -->
+            <div class="mt-4">
+                <div class="flex items-center justify-between mb-3 px-1">
+                    <h3 class="text-xs font-black text-slate-400 uppercase tracking-widest">Riwayat Saya</h3>
+                    <span id="historyCount" class="text-[10px] bg-slate-100 px-2 py-0.5 rounded-full text-slate-500 font-bold">0 data</span>
+                </div>
+                <div id="personalHistory" class="space-y-3 max-h-80 overflow-y-auto custom-scroll pr-1">
+                    <div class="bg-white p-4 rounded-2xl border border-slate-100 text-center py-6">
+                        <p class="text-[11px] text-slate-400 italic">Masukkan nama untuk melihat riwayat</p>
+                    </div>
+                </div>
             </div>
         </main>
 
@@ -137,7 +183,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
-        import { getFirestore, collection, addDoc, onSnapshot, query } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
 
         let db, auth;
@@ -146,26 +192,20 @@
         try {
             const firebaseConfigStr = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
             const firebaseConfig = JSON.parse(firebaseConfigStr);
-            
             if (Object.keys(firebaseConfig).length > 0) {
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
             }
-        } catch (e) {
-            console.error("Firebase init failed:", e);
-        }
+        } catch (e) { console.error(e); }
 
         const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyN_OfL1SspcZFsZ4gtB3D89jdCi2kkdEJ_6hz1DUDCGmp0yX_NaDHvOJUNWWxBQohkhQ/exec"; 
-        
         const fixedAddress = "FVJ2+G78, Tikala Ares, Kec. Tikala, Kota Manado, Sulawesi Utara";
         const fixedLat = "1.4814576";
         const fixedLng = "124.8506251";
         const googleMapsLink = `https://www.google.com/maps/search/?api=1&query=${fixedLat},${fixedLng}`;
-        const driveFolderLink = "https://drive.google.com/drive/folders/1THXHWb6hx6LlJnZvcsn2FfjuwyotGoIQ?usp=sharing";
 
         let userAuthenticated = false;
-        let capturedBase64 = null;
         let attendanceData = [];
         let unsubscribe = null;
         let stream = null;
@@ -175,12 +215,8 @@
             try {
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (error) { 
-                console.error("Auth error:", error); 
-            }
+                } else { await signInAnonymously(auth); }
+            } catch (e) { console.error(e); }
         };
 
         if (auth) {
@@ -203,37 +239,27 @@
 
         async function initCamera() {
             try {
-                if (stream) {
-                    stream.getTracks().forEach(track => track.stop());
-                }
-                
-                try {
-                    stream = await navigator.mediaDevices.getUserMedia({ 
-                        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } } 
-                    });
-                } catch (e) {
-                    stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                }
-                
+                if (stream) stream.getTracks().forEach(t => t.stop());
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'user', width: { ideal: 1080 }, height: { ideal: 1080 } } 
+                });
                 const videoEl = document.getElementById('video');
                 videoEl.srcObject = stream;
-                videoEl.onloadedmetadata = () => {
-                    videoEl.play().catch(e => console.error(e));
-                };
-            } catch (err) { 
-                showToast("Akses kamera ditolak.", "error"); 
-            }
+                videoEl.play().catch(e => console.error(e));
+                videoEl.style.display = 'block';
+                document.getElementById('photoPreview').style.display = 'none';
+            } catch (err) { showToast("Kamera error/ditolak.", "error"); }
         }
 
         function listenToAttendance() {
             if (!userAuthenticated || !db) return;
             if (unsubscribe) unsubscribe();
-
             const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'attendance');
             unsubscribe = onSnapshot(colRef, (snapshot) => {
                 attendanceData = snapshot.docs.map(doc => doc.data());
                 attendanceData.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
                 renderRecap();
+                filterPersonalHistory();
             }, (error) => console.error(error));
         }
 
@@ -259,6 +285,47 @@
             `).join('');
         }
 
+        window.filterPersonalHistory = () => {
+            const nameValue = document.getElementById('nameInput').value.trim();
+            const nameSearch = nameValue.toLowerCase();
+            const historyContainer = document.getElementById('personalHistory');
+            const countBadge = document.getElementById('historyCount');
+            
+            if (!nameValue) {
+                historyContainer.innerHTML = '<div class="bg-white p-4 rounded-2xl border border-slate-100 text-center py-6"><p class="text-[11px] text-slate-400 italic">Masukkan nama untuk melihat riwayat</p></div>';
+                countBadge.innerText = '0 data';
+                return;
+            }
+
+            const personalData = attendanceData.filter(item => item.nama && item.nama.toLowerCase().includes(nameSearch));
+            countBadge.innerText = `${personalData.length} data`;
+
+            if (personalData.length === 0) {
+                historyContainer.innerHTML = '<div class="bg-white p-4 rounded-2xl border border-slate-100 text-center py-6"><p class="text-[11px] text-slate-400 italic">Belum ada riwayat</p></div>';
+            } else {
+                historyContainer.innerHTML = personalData.map(item => `
+                    <div class="bg-white p-3 rounded-2xl border border-slate-100 flex items-center justify-between shadow-sm">
+                        <div class="flex items-center gap-3">
+                            <img src="${item.foto}" class="history-thumb shadow-sm border border-slate-100" alt="Foto">
+                            <div>
+                                <p class="text-[11px] font-black text-slate-800 leading-tight">${item.nama}</p>
+                                <p class="text-[9px] font-bold ${item.status === 'Masuk' ? 'text-blue-500' : 'text-rose-500'} mt-0.5">${item.status.toUpperCase()} • ${item.jam}</p>
+                                <p class="text-[8px] text-slate-400">${item.tanggal}</p>
+                            </div>
+                        </div>
+                        <div class="flex flex-col items-end gap-1">
+                            <a href="${item.lokasi}" target="_blank" class="p-2 bg-slate-50 rounded-lg text-slate-400 hover:text-blue-500 transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                                </svg>
+                            </a>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        };
+
         window.toggleView = () => {
             const isRecap = document.getElementById('presensiView').classList.toggle('hidden');
             document.getElementById('recapView').classList.toggle('hidden');
@@ -268,10 +335,8 @@
             if (!isRecap) initCamera();
         };
 
-        window.takeSnapshot = (statusText = "") => {
+        async function generateWatermarkPhoto(statusText) {
             const video = document.getElementById('video');
-            if (!video.videoWidth) return showToast("Kamera belum siap", "error");
-
             const canvas = document.getElementById('canvas');
             const ctx = canvas.getContext('2d');
             const logoImg = document.getElementById('logoSource');
@@ -280,46 +345,35 @@
             canvas.width = size; 
             canvas.height = size;
             
+            ctx.translate(size, 0); 
+            ctx.scale(-1, 1);
             const vWidth = video.videoWidth;
             const vHeight = video.videoHeight;
             const minDim = Math.min(vWidth, vHeight);
-            const sx = (vWidth - minDim) / 2;
-            const sy = (vHeight - minDim) / 2;
-
-            // Foto Mirroring
-            ctx.translate(size, 0); 
-            ctx.scale(-1, 1);
-            ctx.drawImage(video, sx, sy, minDim, minDim, 0, 0, size, size);
+            ctx.drawImage(video, (vWidth-minDim)/2, (vHeight-minDim)/2, minDim, minDim, 0, 0, size, size);
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             
-            // Background Watermark (Transparan Hitam)
-            ctx.fillStyle = "rgba(0,0,0,0.7)"; 
+            ctx.fillStyle = "rgba(0,0,0,0.75)"; 
             ctx.fillRect(0, 720, size, 280);
             
-            // Menggambar Logo RRI di Watermark
             if (logoImg && logoImg.complete && logoImg.naturalWidth !== 0) {
-                // Gambar logo di sisi kanan bawah watermark
-                const logoSize = 120;
-                ctx.drawImage(logoImg, size - 160, 750, logoSize, logoSize * (logoImg.naturalHeight / logoImg.naturalWidth));
+                const lSize = 130;
+                ctx.drawImage(logoImg, size - 170, 750, lSize, lSize * (logoImg.naturalHeight / logoImg.naturalWidth));
             }
 
-            // Teks Watermark
             ctx.fillStyle = "white"; 
             ctx.font = "bold 36px Arial";
-            ctx.fillText("E-PRESENSI RRI MANADO", 40, 775);
+            ctx.fillText("E-PRESENSI RRI MANADO", 40, 780);
             
-            // Keterangan MASUK / PULANG
-            if (statusText) {
-                ctx.font = "bold 44px Arial";
-                ctx.fillStyle = statusText.toUpperCase() === "MASUK" ? "#38bdf8" : "#fb7185";
-                ctx.fillText(`KETERANGAN: ${statusText.toUpperCase()}`, 40, 835);
-            }
+            ctx.font = "bold 46px Arial";
+            ctx.fillStyle = statusText.toUpperCase() === "MASUK" ? "#60a5fa" : "#fb7185";
+            ctx.fillText(`KETERANGAN: ${statusText.toUpperCase()}`, 40, 840);
 
             ctx.fillStyle = "white";
             ctx.font = "24px Arial";
-            const dateStr = new Date().toLocaleDateString('id-ID', {weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'});
-            ctx.fillText(dateStr, 40, 885);
-            ctx.fillText(`Waktu: ${new Date().toLocaleTimeString('id-ID')}`, 40, 920);
+            const d = new Date();
+            ctx.fillText(d.toLocaleDateString('id-ID', {weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'}), 40, 890);
+            ctx.fillText(`Waktu: ${d.toLocaleTimeString('id-ID')}`, 40, 925);
             
             ctx.fillStyle = "#93c5fd";
             ctx.font = "bold 20px Arial";
@@ -327,52 +381,39 @@
             ctx.font = "16px Arial";
             ctx.fillText(`Koordinat: ${fixedLat}, ${fixedLng}`, 40, 985);
             
-            capturedBase64 = canvas.toDataURL('image/jpeg', 0.85);
-            const preview = document.getElementById('photoPreview');
-            preview.src = capturedBase64;
-            preview.style.display = 'block';
-            video.style.display = 'none';
-            document.getElementById('captureAction').classList.add('hidden');
-            document.getElementById('retakeBtn').classList.remove('hidden');
-            document.getElementById('timeOverlay').classList.add('hidden');
-        };
+            return canvas.toDataURL('image/jpeg', 0.85);
+        }
 
-        window.retakePhoto = () => {
-            capturedBase64 = null;
-            document.getElementById('photoPreview').style.display = 'none';
-            document.getElementById('video').style.display = 'block';
-            document.getElementById('captureAction').classList.remove('hidden');
-            document.getElementById('retakeBtn').classList.add('hidden');
-            document.getElementById('timeOverlay').classList.remove('hidden');
-            initCamera();
-        };
-
-        window.submitAbsence = async (status) => {
+        window.handlePresence = async (status) => {
             const name = document.getElementById('nameInput').value.trim();
             if (!name) return showToast("Masukkan Nama Pegawai!", "error");
             
-            if (!capturedBase64) {
-                takeSnapshot(status);
-                showToast(`Foto ${status} disiapkan. Tekan ${status} sekali lagi untuk simpan.`);
-                return;
-            }
+            const video = document.getElementById('video');
+            if (!video.videoWidth) return showToast("Kamera belum siap", "error");
 
-            showToast("Menyimpan Presensi...");
-            const now = new Date();
-            const data = {
-                nama: name, 
-                status: status, 
-                tanggal: now.toLocaleDateString('id-ID'), 
-                jam: now.toLocaleTimeString('id-ID'),
-                timestamp: now.toISOString(), 
-                foto: capturedBase64,
-                lokasi: googleMapsLink,
-                driveFolder: driveFolderLink,
-                alamat: fixedAddress,
-                userId: auth?.currentUser?.uid || "anon"
-            };
-
+            document.getElementById('loadingOverlay').style.display = 'flex';
+            
             try {
+                const photoBase64 = await generateWatermarkPhoto(status);
+                
+                const preview = document.getElementById('photoPreview');
+                preview.src = photoBase64;
+                preview.style.display = 'block';
+                video.style.display = 'none';
+
+                const now = new Date();
+                const data = {
+                    nama: name, 
+                    status: status, 
+                    tanggal: now.toLocaleDateString('id-ID'), 
+                    jam: now.toLocaleTimeString('id-ID'),
+                    timestamp: now.toISOString(), 
+                    foto: photoBase64,
+                    lokasi: googleMapsLink,
+                    alamat: fixedAddress,
+                    userId: auth?.currentUser?.uid || "anon"
+                };
+
                 if (db) {
                     const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'attendance');
                     await addDoc(colRef, data);
@@ -387,38 +428,39 @@
                     formData.append('lokasi', data.lokasi);
                     formData.append('alamat', fixedAddress);
                     formData.append('foto', data.foto.split(',')[1]); 
-                    fetch(SCRIPT_URL, { method: 'POST', body: formData, mode: 'no-cors' }).catch(e => {});
+                    fetch(SCRIPT_URL, { method: 'POST', body: formData, mode: 'no-cors' }).catch(() => {});
                 }
 
-                showToast("Berhasil: " + status);
-                document.getElementById('nameInput').value = "";
-                retakePhoto();
+                showToast(`Berhasil Presensi ${status}!`);
+                
+                setTimeout(() => {
+                    initCamera();
+                    document.getElementById('loadingOverlay').style.display = 'none';
+                }, 2000);
+
             } catch (e) { 
-                showToast("Gagal menyimpan data.", "error"); 
+                console.error(e);
+                showToast("Gagal memproses data.", "error"); 
+                document.getElementById('loadingOverlay').style.display = 'none';
+                initCamera();
             }
         };
 
         function showToast(msg, type = "success") {
             const t = document.getElementById('toast');
-            if(!t) return;
             t.innerText = msg;
             t.style.backgroundColor = type === "success" ? "#0f172a" : "#ef4444";
             t.style.opacity = "1";
-            t.style.pointerEvents = "auto";
-            setTimeout(() => {
-                t.style.opacity = "0";
-                t.style.pointerEvents = "none";
-            }, 3000);
+            setTimeout(() => t.style.opacity = "0", 3000);
         }
 
         window.downloadCSV = () => {
             if (attendanceData.length === 0) return;
             const headers = "Nama,Status,Tanggal,Jam,Alamat,Lokasi\n";
-            const rows = attendanceData.map(i => `"${i.nama}",${i.status},${i.tanggal},${i.jam},"${i.alamat || ''}","${i.lokasi || ''}"`).join("\n");
+            const rows = attendanceData.map(i => `"${i.nama}",${i.status},${i.tanggal},${i.jam},"${i.alamat}","${i.lokasi}"`).join("\n");
             const blob = new Blob([headers + rows], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url;
+            a.href = URL.createObjectURL(blob);
             a.download = `Rekap_Presensi_RRI.csv`;
             a.click();
         };
